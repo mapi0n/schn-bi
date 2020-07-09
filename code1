@@ -1,0 +1,263 @@
+//Gewichtslimit/Reaktion auf bestimmtes Gewicht funktioniert nicht!! (09.07.20)
+//----> while() bei displayWeight.
+
+#include "RTClib.h"
+
+#include "U8g2lib.h"
+#include "i2c.h"
+#include "Wire.h"
+
+#include "i2c_SI7021.h"
+#define DT A0
+#define SCK A1
+#define sw 9
+
+//Uhr (RealTimeClock) initialisieren.
+RTC_DS3231 rtc;
+
+//Display initialisieren.
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+
+//Fix gesetzte Intervalle
+const unsigned long clockRefreshInterval = 100;
+const unsigned long weightRefreshInterval = 100;
+
+int measurement1 = 0;
+
+//Zeitschaltung.
+//ACHTUNG: 24h, aber keine Angaben mit "04", sondern "4"!
+const int OnHour = 22;
+const int OnMin = 22;
+//const int OffHour = 16;
+//const int OffMin = 21;
+
+//Wochentag definition.
+char daysOfTheWeek[7][12] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
+
+long sample=0;
+float val=0;
+long count=0;
+
+unsigned long readCount(void) {
+  unsigned long Count;
+  unsigned char i;
+  pinMode(DT, OUTPUT);
+  digitalWrite(DT,HIGH);
+  digitalWrite(SCK,LOW);
+  Count=0;
+  pinMode(DT, INPUT);
+  while(digitalRead(DT));
+  for (i=0;i<24;i++)
+  {
+    digitalWrite(SCK,HIGH);
+    Count=Count<<1;
+    digitalWrite(SCK,LOW);
+    if(digitalRead(DT)) 
+    Count++;
+  }
+  digitalWrite(SCK,HIGH);
+  Count=Count^0x800000;
+  digitalWrite(SCK,LOW);
+  return(Count);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void setup() {
+
+  u8g2.begin();
+  Serial.begin(57600);
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); //Aktuelle Zeit von Computer nehmen. (nur bei Upload)
+//rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));  // Uhrzeit spezifisch setzen, Beispiel: 21.01.2014, 03.00.00 Uhr
+  pinMode(SCK, OUTPUT);
+  pinMode(sw, INPUT_PULLUP);
+  calibrate();
+
+}
+
+void loop() {
+
+  displayClock();
+//  displayWeight();
+  activateScale();
+
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void calibrate () {
+
+  delayLoop(2000);
+  
+  u8g2.firstPage();
+  do {
+  u8g2.setFont(u8g_font_unifont);
+  u8g2.setCursor(0,40);
+  u8g2.print("Kalibriere Waage");
+  } while( u8g2.nextPage() );
+
+  delayLoop(1000);
+
+  u8g2.firstPage();
+  do {
+  u8g2.setFont(u8g_font_unifont);
+  u8g2.setCursor(0,40);
+  u8g2.print("Bitte warten");
+  } while( u8g2.nextPage() );
+
+  for(int i=0;i<100;i++)
+  {
+    count=readCount();
+    sample+=count;
+  }
+  sample/=100;
+
+  u8g2.firstPage();
+  do {
+  u8g2.setFont(u8g_font_unifont);
+  u8g2.setCursor(0,40);
+  u8g2.println("100g Gewicht");
+  u8g2.setCursor(0,55);
+  u8g2.println("platzieren");
+  } while( u8g2.nextPage() );
+
+  count=0;
+  while(count<1000)
+  {
+    count=readCount();
+    count=sample-count;
+  }
+
+  u8g2.firstPage();
+  do {
+  u8g2.setFont(u8g_font_unifont);
+  u8g2.setCursor(0,40);
+  u8g2.println("Bitte warten");
+  } while( u8g2.nextPage() );
+
+  delayLoop(1000);
+
+  for(int i=0;i<100;i++)
+  {
+    count=readCount();
+    val+=sample-count;
+  }
+  val=val/100.0;
+  val=val/100.0;                              //Kalibrierungsgewicht (100g) platzieren
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void displayWeight() {
+
+    while(measurement1 = 1) {
+      count = readCount();
+      int w =(((count-sample)/val)-2*((count-sample)/val));
+    
+      u8g2.firstPage();
+      do {
+      u8g2.setCursor (0,40);
+      u8g2.print("Gewicht: ");
+      u8g2.print(w);
+      u8g2.println("g");
+      
+      if(digitalRead(sw)==0)
+      {
+        val = 0;
+        sample = 0;
+        w = 0;
+        count = 0;
+        calibrate();
+      }
+      
+  //    delayLoop(weightRefreshInterval);
+      delayLoop(100);  
+      } while(u8g2.nextPage());
+      if (w > 100) {                           ////wenn mehr als xxx gramm
+      measurement1 = 0;
+      }
+    }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void activateScale() {
+
+  DateTime now = rtc.now();
+  
+  if (now.hour() == OnHour && now.minute() == OnMin && now.second() == 0) {
+    measurement1 = 1;
+    displayWeight();
+  }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void displayClock() {
+
+  DateTime now = rtc.now();
+
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g_font_unifont);
+    u8g2.setCursor (0, 10);
+    u8g2.print(daysOfTheWeek[now.dayOfTheWeek()]);
+    u8g2.print(", ");
+    if (now.day() < 10) {                 //formatierung Tage dd anstatt d
+      u8g2.print("0");
+    }
+    u8g2.print(now.day(), DEC);
+    u8g2.print(".");
+    if (now.month() < 10) {               //formatierung Monate mm anstatt m
+      u8g2.print("0");
+    }
+    u8g2.print(now.month(), DEC);
+    u8g2.print(".");
+    u8g2.println(now.year(), DEC);
+
+    u8g2.setCursor(0, 25);
+    if (now.hour() < 10) {                //formatierung Stunden hh anstatt h
+      u8g2.print("0");
+    }
+    u8g2.print(now.hour(), DEC);
+    u8g2.print(':');
+    if (now.minute() < 10) {              //formatierung Minuten mm anstatt m
+      u8g2.print("0");
+    }
+    u8g2.print(now.minute(), DEC);
+    u8g2.print(':');
+    if (now.second() < 10) {              //formatierung Sekunden ss anstatt s
+      u8g2.print("0");
+    }
+    u8g2.print(now.second(), DEC);
+    u8g2.println();                       //commented wenn keine Sekundenanzeige nötig.
+   }
+   while (u8g2.nextPage());
+   
+   delayLoop(clockRefreshInterval);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//DelayLoop ohne delay()
+
+void delayLoop(long milliSecondsDelay)
+{
+   const unsigned long startMillisDelay = millis();
+   while (true)
+   {
+       unsigned long currentMillisDelay = millis();
+       if (currentMillisDelay - startMillisDelay >= milliSecondsDelay)
+       {
+           return;
+       }
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
